@@ -1,0 +1,188 @@
+
+
+```{r}
+library('tidyverse')
+Real_full2<- read_csv("Real_full.csv")
+
+
+
+
+Full <- Real_full2 %>% mutate(Sale_Price_Median = (SalePrice - median(SalePrice))/median(SalePrice),
+                              Total_SF = TotalBsmtSF + `1stFlrSF` +`2ndFlrSF`, 
+                              Total_Sf_Median = (Total_SF - median(Total_SF)) / median(Total_SF), 
+                              fixer = case_when(Sale_Price_Median <= -0.2   &
+                                                Total_Sf_Median >= -0.2~ 1, TRUE ~ 0), 
+                              YearSinceBuilt = 2010-YearBuilt, YearSinceRemod = 2010 - YearRemodAdd,
+                              SalePrice = SalePrice/100000, Neighborhood = fct_lump(Neighborhood,8))
+median(Full$SalePrice)
+table(Full$SalePrice)
+
+Full[sapply(Full, is.character)] <- lapply(Full[sapply(Full, is.character)], 
+                                                           as.factor)
+
+
+Real_split <- initial_split(Full, prop = 0.75)
+Real_train <- training(Real_split)
+Real_test <- testing(Real_split)
+
+library('glmnet')
+library('glmnetUtils')
+library('readr')
+library('dplyr')
+library('forcats')
+library('rsample')
+library(partykit)
+library(tidyverse)
+library(titanic)
+library(PerformanceAnalytics)
+library(rpart)       
+library(rpart.plot)  
+library('ggplot2')
+
+
+set.seed(16)
+
+
+
+
+```
+
+
+```{r}
+
+
+mylogit <- glm(as.factor(fixer) ~ OverallQual + OverallCond+ relevel(ExterQual, ref = "Fa") 
+               + relevel(ExterCond, ref = "Fa") + relevel(BsmtQual, ref = "Fa") + 
+                 relevel(KitchenQual, ref ="Fa") +
+                 BsmtCond  + YearSinceRemod, 
+                data = Real_train, 
+               family = "binomial")
+
+print(mylogit)
+round(exp(mylogit$coefficients),digits = 3
+      )
+score <- predict(mylogit,
+                 newdata = Real_train,
+                 type = 'response')
+
+results_train <- tibble(
+  `truth` = (Real_train$fixer),
+  `Class1` =  score,
+  `Class2` = 1 - score,
+  `predicted` = as.factor(ifelse(score >0.25,
+                                 1, 0)))
+
+score2 <- predict(mylogit,
+                  type ='response',
+                  newdata = Real_test)
+
+results_test <- tibble(
+  `truth_test` = (Real_test$fixer),
+  `class1_test` = score2,
+  `class2_test` = 1 - score2,
+  `predicted_test` = as.factor(ifelse(score2 > 0.4,
+                                      1, 0))
+)
+
+p <- ggplot(results_train, 
+            aes(m = Class1, d = truth)) + 
+  geom_roc(labelsize = 3.5, 
+           cutoffs.at = 
+       c(0.99,0.7,0.5,0.3,0.2,0.1,0)) +
+  theme_classic(base_size = 16)
+print(p)
+
+p2<- ggplot(results_test, 
+            aes(m = class1_test, d = truth_test)) + 
+  geom_roc(labelsize = 3.5, 
+           cutoffs.at = 
+             c(0.99,0.7,0.5,0.3,0.2,0.1,0)) +
+  theme_classic(base_size = 16)
+
+print(p2)
+
+calc_auc(p)
+         
+calc_auc(p2)
+
+
+varImp(mylogit,scale =False)
+
+
+ggplot(data = Real_train, aes(y = score, x = OverallQual)) + 
+  geom_point(colour = "red", alpha = 1/5) +
+  geom_smooth(method='glm', formula= y~log(x), se= FALSE) + 
+  theme_classic(base_size = 8) + 
+  labs(x = "Overall Quality", y = "Log Score", title = "Log Score to Overall Quality")
+
+ggplot(data = Real_train, aes(y = score, x = OverallCond)) + 
+  geom_point(colour = "red", alpha = 1/5) +
+  geom_smooth(method='glm', formula= y~log(x), se= FALSE) + 
+  theme_classic(base_size = 8) + 
+  labs(x = "Overall Condition", y = "Log Score", title = "Log Score to Overall Condition")
+
+ggplot(data = Real_train, aes(x=KitchenQual, y=score, fill=KitchenQual)) + 
+    geom_boxplot() +
+    xlab("class") +
+    theme(legend.position="none") +
+    xlab("") +
+    xlab("") +
+  labs(x = "Exterior Quality", y = 'log Score' , title = "Log Score to Exterior Quality")
+
+ggplot(data = Real_train, aes(x=ExterQual, y=score, fill=ExterQual)) + 
+    geom_boxplot() +
+    xlab("class") +
+    theme(legend.position="none") +
+    xlab("") +
+    xlab("") +
+  labs(x = "Exterior Quality", y = 'log Score' , title = "Log Score to Exterior Quality")
+
+cm<- conf_mat(results_train, 
+               truth = as.factor(truth),
+               estimate = predicted)
+
+```
+
+
+
+
+```{r}
+
+
+
+enet_mod <- cva.glmnet(SalePrice ~ OverallQual + OverallCond+ ExterQual + ExterCond + BsmtQual + BsmtCond  + KitchenQual + YearSinceRemod + Neighborhood,
+                       data = Real_train,
+                       alpha = seq(0,1, by = 0.05))
+
+print(enet_mod)
+plot(enet_mod)
+minlossplot(enet_mod, cv.type = "min")
+
+lasso_mod<- cv.glmnet(SalePrice ~ OverallQual + OverallCond+ ExterQual + ExterCond + BsmtQual + BsmtCond  + KitchenQual + YearSinceRemod + Neighborhood + Fireplaces,
+                      
+                       data = Real_train, 
+                       alpha = .25)
+
+plot(lasso_mod)
+print(lasso_mod)
+print(lasso_mod$lambda.1se)
+coef(lasso_mod, 
+     s = lasso_mod$lambda.1se) %>% 
+  round(3)
+coef(lasso_mod, 
+     s = lasso_mod$lambda.min) %>% 
+  round(3)
+
+ggplot(Real_train[Real_train$Neighborhood == "NAmes" | Real_train$Neighborhood == "CollgCr" | Real_train$Neighborhood == "OldTown" | Real_train$Neighborhood == "Edwards" | Real_train$Neighborhood == "Somerst", ], aes(x=Neighborhood, y=SalePrice, color = Neighborhood)) + 
+  geom_boxplot(notch=FALSE) + theme_minimal(base_size = 16)
+
+
+ggplot(data = Real_train, aes(x=Neighborhood, y=SalePrice, fill=Neighborhood)) + 
+    geom_boxplot() +
+    xlab("class") +
+    theme(legend.position="none") +
+    xlab("") +
+    xlab("") +
+  labs(x = "Neighborhood", y = 'Sale Price' , title = "Sale Price by Neighborhood")
+
+```
